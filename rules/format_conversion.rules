@@ -1,0 +1,26 @@
+# *********************************************************************
+#                    CONVERSION TO PLINK FORMAT
+# *********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+rule vcf_to_tped:
+	input:
+		variantAnnotation()
+	output:
+		outFormatConversion + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{chr}.tped",
+		outFormatConversion + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{chr}.tfam"
+	shell:
+		"%s --vcf {input} --plink-tped --chr {wildcards.chr} --out %s/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{wildcards.chr}" % (vcftools, outFormatConversion)
+		
+rule ped_to_bed:
+	input:
+		vcftoolsPlinkConv(chromosomes)
+	output:
+		outFormatConversion + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{chr}.bed",
+		outFormatConversion + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{chr}.bim",
+		outFormatConversion + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{chr}.fam"
+	shell:
+		"%s --tfile %s/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{wildcards.chr} --out %s/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.{wildcards.chr} --make-bed" % (plink, outFormatConversion, outFormatConversion)
+		

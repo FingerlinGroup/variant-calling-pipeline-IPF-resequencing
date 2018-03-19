@@ -1,0 +1,36 @@
+# *********************************************************************
+#                        CALLSET REFINEMENT
+# https://www.broadinstitute.org/gatk/guide/bp_step.php?p=3
+# https://www.broadinstitute.org/gatk/guide/article?id=4723
+# https://docs.google.com/file/d/0B2dK2q40HDWeMzFldVF5SUp4dWM/preview
+# *********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+
+# CalculateGenotypePosteriors: Calculate genotype posterior likelihoods given panel data
+# https://www.broadinstitute.org/gatk/guide/article?id=4727
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantutils_CalculateGenotypePosteriors.php
+# Here, we follow the method to "refine the genotypes of a large panel based on the discovered allele frequency"
+rule calculateGenotypePosteriors:
+	input:
+		applyRecalibrationIndels()
+	output:
+		outRefinement + "/multisample.genotyped.recalibrated.filtered.withPosteriors.vcf"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T CalculateGenotypePosteriors -V {input} -o {output}" % (java, jvm, gatk, reference, intervals)
+		
+		
+# VariantFiltration: Filter variant calls based on INFO and FORMAT annotations
+# https://www.broadinstitute.org/gatk/guide/article?id=4727
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_filters_VariantFiltration.php
+# Use recommendations here: https://www.broadinstitute.org/gatk/guide/article?id=4727
+rule variantFiltration:
+	input:
+		calculateGenotypePosteriors()
+	output:
+		outRefinement + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.vcf"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T VariantFiltration -V {input} -G_filter \"GQ < 20.0\" -G_filterName lowGQ -o {output}" % (java, jvm, gatk, reference, intervals)
+		

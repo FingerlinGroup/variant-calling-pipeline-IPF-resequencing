@@ -1,0 +1,24 @@
+# *********************************************************************
+#                        VARIANT ANNOTATION
+# https://docs.google.com/file/d/0B2dK2q40HDWeWi1YMm42bWdpRE0/preview
+# https://software.broadinstitute.org/gatk/documentation/tooldocs/current/
+# *********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+
+# VariantAnnotator: annotate variant calls with context information
+# https://software.broadinstitute.org/gatk/gatkdocs/3.6-0/org_broadinstitute_gatk_tools_walkers_annotator_VariantAnnotator.php
+rule variantAnnotation:
+	input:
+		variantFiltration()
+	output:
+		outVariantAnnot + "/multisample.genotyped.recalibrated.filtered.withPosteriors.Gfiltered.annotated.vcf"
+	shell:
+		"""%s %s -jar %s -R %s -L %s -T VariantAnnotator \
+		-V {input} --dbsnp %s -A HardyWeinberg -A VariantType -A GenotypeSummaries \
+		-A AlleleBalance -o {output}""" % (java, jvm, gatk, reference, intervals, dbsnp)
+		
+
+

@@ -1,0 +1,18 @@
+# **********************************************************************
+# COUNT ON-TARGET AND OFF-TARGET GENOME ALIGNMENTS
+# **********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+rule offTarget:
+	input:
+		bam = data + "/{sample}.bam",
+		bai = data + "/{sample}.bai"
+	output:
+		outOffTarget + "/{sample}.off_target.txt"
+	shell:
+		"%s %s {input.bam} %s > {output}" % (offTargetScript, intervalsBedNoChr, samtools)
+		
+		
+	

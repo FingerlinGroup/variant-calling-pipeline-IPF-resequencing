@@ -1,0 +1,145 @@
+# **********************************************************************
+# VARIANT DISCOVERY
+# https://www.broadinstitute.org/gatk/guide/bp_step.php?p=2
+# https://docs.google.com/file/d/0B2dK2q40HDWeYzVTUGs0bjM3M1E/preview
+# https://docs.google.com/file/d/0B2dK2q40HDWeSEpwRkNVQm4wdkE/preview
+# **********************************************************************
+
+include:
+	config["directories"]["rules"] + "file_util.py"
+include:
+	config["directories"]["rules"] + "batches.py"
+
+def _gatk_multi_arg(flag, files):
+	flag += " "
+	return " ".join(flag + f for f in files)
+
+# haplotypeCaller: Call germline SNPs and indels via local re-assembly of haplotypes
+# For cohort mode, call variants per sample then combine with CombineGVCFs
+# https://www.broadinstitute.org/gatk/guide/article?id=3893
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_haplotypecaller_HaplotypeCaller.php
+rule haplotypeCaller:
+	input:
+		bam = recalibratedBam,
+		csv = analyzeCovariatesCSV,
+		pdf = analyzeCovariatesPlots
+	output:
+		outDiscovery + "/{sample}.recalibrated.raw.snps.indels.g.vcf"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T HaplotypeCaller -I {input.bam} --emitRefConfidence GVCF --dbsnp %s -o {output}" % (java, jvm, gatk, reference, intervals, dbsnp)
+
+
+# CombineGVCFs: Combine per-sample gVCF files produced by HaplotypeCaller into several multi-sample gVCF files
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantutils_CombineGVCFs.php
+# Combine in batches. See https://docs.google.com/file/d/0B2dK2q40HDWeYzVTUGs0bjM3M1E/preview
+rule combineGVCFs:
+	input:
+		expand(outDiscovery + "/{sample}.recalibrated.raw.snps.indels.g.vcf", sample=samples)
+	output:
+		outDiscovery + "/multisample.{batch}.g.vcf"
+	run:
+		b = wildcards.batch
+		thisBatch = batchDict[b]
+		batchgvcfs = batchGVCFs(thisBatch)
+		gvcfs = _gatk_multi_arg("--variant", batchgvcfs)
+		shell("%s %s -jar %s -R %s -L %s -T CombineGVCFs {gvcfs} --dbsnp %s -o {output}" % (java, jvm, gatk, reference, intervals, dbsnp))
+
+		
+# GenotypeGVCFs: Perform joint genotyping on gVCF files produced by HaplotypeCaller
+# https://www.broadinstitute.org/gatk/guide/article?id=3893
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantutils_GenotypeGVCFs.php
+rule genotypeGVCFs:
+	input:
+		expand(outDiscovery + "/multisample.{batch}.g.vcf", batch=batchNames)
+	output:
+		outDiscovery + "/multisample.genotyped.vcf"
+	run:
+		gvcfs = _gatk_multi_arg("--variant", input)
+		shell("%s %s -jar %s -R %s -L %s -T GenotypeGVCFs {gvcfs} --dbsnp %s -o {output}" % (java, jvm, gatk, reference, intervals, dbsnp))
+
+		
+# VariantRecalibrator for SNPs: Build a recalibration model to score variant quality for filtering purposes (SNPs)
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantrecalibration_VariantRecalibrator.php
+# https://www.broadinstitute.org/gatk/guide/article?id=39
+# https://www.broadinstitute.org/gatk/guide/article?id=2805
+# https://www.broadinstitute.org/gatk/guide/article?id=1259 for parameter recommendations
+rule variantRecalibratorSNPs:
+	input:
+		genotypeGVCFs()
+	output:
+		recal=outDiscovery + "/multisample.genotyped.SNP.recal",
+		tranches=outDiscovery + "/multisample.genotyped.SNP.tranches"
+	run:
+		an = ["QD", "MQ", "MQRankSum", "ReadPosRankSum", "FS", "SOR", "InbreedingCoeff"]
+		anCmd = _gatk_multi_arg("-an", an)
+		shell(
+			"%s %s -jar %s -R %s -L %s -T VariantRecalibrator "
+			"-input {input} "
+			"-nt 1 "
+			"-resource:hapmap,known=false,training=true,truth=true,prior=15.0 %s "
+			"-resource:omni,known=false,training=true,truth=true,prior=12.0 %s "
+			"-resource:1000G,known=false,training=true,truth=false,prior=10.0 %s "
+			"-resource:dbsnp,known=true,training=false,truth=false,prior=2.0 %s "
+			"{anCmd} "
+			"-mode SNP "
+			"-recalFile {output.recal} "
+			"-tranchesFile {output.tranches}" % (java, jvm, gatk, reference, intervals, hapmap, omni, thousand_genomes_SNPs, dbsnp))
+
+
+# ApplyRecalibration for SNPs: Apply a score cutoff to filter variants based on a recalibration table (SNPs)
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantrecalibration_ApplyRecalibration.php
+# https://www.broadinstitute.org/gatk/guide/article?id=1259 for parameter recommendations
+rule applyRecalibrationSNPs:
+	input:
+		gvcf=genotypeGVCFs(),
+		recal=variantRecalSNPsRecal(),
+		tranches=variantRecalSNPsTranches()
+	output:
+		outDiscovery + "/multisample.genotyped.recalibrated.filtered.SNPs_only.vcf"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T ApplyRecalibration "
+		"-input {input.gvcf} --ts_filter_level 99.5 "
+		"-tranchesFile {input.tranches} -recalFile {input.recal} -mode SNP -o {output}" % (java, jvm, gatk, reference, intervals)
+	
+
+# VariantRecalibrator for indels: Build a recalibration model to score variant quality for filtering purposes (indels)
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantrecalibration_VariantRecalibrator.php
+# https://www.broadinstitute.org/gatk/guide/article?id=39
+# https://www.broadinstitute.org/gatk/guide/article?id=2805
+# https://www.broadinstitute.org/gatk/guide/article?id=1259 for parameter recommendations
+rule variantRecalibratorIndels:
+	input:
+		applyRecalibrationSNPs()
+	output:
+		recal=outDiscovery + "/multisample.genotyped.indel.recal",
+		tranches=outDiscovery + "/multisample.genotyped.indel.tranches"
+	run:
+		an = ["QD", "FS", "SOR", "ReadPosRankSum", "MQRankSum", "InbreedingCoeff"]
+		anCmd = _gatk_multi_arg("-an", an)
+		shell(
+			"%s %s -jar %s -R %s -L %s -T VariantRecalibrator "
+			"-input {input} "
+			"-nt 1 "
+			"--maxGaussians 4 "
+			"-resource:dbsnp,known=true,training=false,truth=false,prior=2.0 %s "
+			"-resource:millsIndels,known=false,training=true,truth=true,prior=12.0 %s "
+			"{anCmd} "
+			"-mode INDEL " 
+			"-recalFile {output.recal} "
+			"-tranchesFile {output.tranches}" % (java, jvm, gatk, reference, intervals, dbsnp, mills))
+
+
+# ApplyRecalibration for indels: Apply a score cutoff to filter variants based on a recalibration table (SNPs)
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_variantrecalibration_ApplyRecalibration.php
+# https://www.broadinstitute.org/gatk/guide/article?id=1259 for parameter recommendations
+rule applyRecalibrationIndels:
+	input:
+		vcf=applyRecalibrationSNPs(),
+		recal=variantRecalIndelsRecal(),
+		tranches=variantRecalIndelsTranches()
+	output:
+		outDiscovery + "/multisample.genotyped.recalibrated.filtered.vcf"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T ApplyRecalibration "
+		"-input {input.vcf} --ts_filter_level 99.0 -tranchesFile {input.tranches} "
+		"-recalFile {input.recal} -mode INDEL -o {output}" % (java, jvm, gatk, reference, intervals)

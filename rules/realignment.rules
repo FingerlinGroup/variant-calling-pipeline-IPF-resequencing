@@ -1,0 +1,37 @@
+# **********************************************************************
+# LOCAL REALIGNMENT AROUND INDELS
+# https://www.broadinstitute.org/gatk/guide/article?id=38
+# https://www.broadinstitute.org/gatk/guide/article?id=2800
+# https://docs.google.com/file/d/0B2dK2q40HDWeLTFzNndsNDBuVms/preview
+# **********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+# RealignerTargetCreator: Define intervals to target for local realignment
+# https://www.broadinstitute.org/gatk/gatkdocs/org_broadinstitute_gatk_tools_walkers_indels_RealignerTargetCreator.php
+rule realignerTargetCreator:
+	input:
+		bam=bamDupsMarked,
+		bai=baiDupsMarked
+	output:
+		outRealign + "/{sample}.interval_list"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T RealignerTargetCreator -I {input.bam} --known %s -o {output}" % (java, jvm, gatk, reference, intervals, mills)
+		
+		
+# IndelRealigner: Perform local realignment of reads around indels
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_indels_IndelRealigner.php
+rule indelRealigner:
+	input:
+		bam=bamDupsMarked,
+		bai=baiDupsMarked,
+		targets=realignerTargets
+	output:
+		bam=outRealign + "/{sample}.realign.bam",
+		idx=outRealign + "/{sample}.realign.bai"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T IndelRealigner -I {input.bam} -known %s -targetIntervals {input.targets} -o {output.bam}" % (java, jvm, gatk, reference, intervals, mills)
+		
+		
+		

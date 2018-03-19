@@ -1,0 +1,14 @@
+# Revert the bam files to fq
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+rule revert_bams:
+	input:
+		data + "/{sample}.bam"
+	output:
+		fq1 = outFastq + "/{sample}_1.fq",
+		fq2 = outFastq + "/{sample}_2.fq"
+	shell:
+		"%s %s -jar %s/SamToFastq.jar I={input} FASTQ={output.fq1} SECOND_END_FASTQ={output.fq2} INCLUDE_NON_PF_READS=true" % (java, jvm, picardDir)
+		

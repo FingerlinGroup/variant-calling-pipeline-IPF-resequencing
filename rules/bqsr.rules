@@ -1,0 +1,76 @@
+# **********************************************************************
+# BASE QUALITY SCORE RECALIBRATION
+# https://www.broadinstitute.org/gatk/guide/article?id=44
+# https://www.broadinstitute.org/gatk/guide/article?id=2801
+# https://docs.google.com/file/d/0B2dK2q40HDWeZk1rMXpTYmZzTXc/preview
+# **********************************************************************
+
+include:
+    config["directories"]["rules"] + "file_util.py"
+
+# BaseRecalibrator: Generate base recalibration table to compensate for systematic errors in basecalling confidences
+# Generate the first pass recalibration table file
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_bqsr_BaseRecalibrator.php
+rule baseRecalibratorBefore:
+	input:
+		bam = realignedBam,
+		idx = realignedBamIdx
+	output:
+		outBQSR + "/{sample}.base_recalibrator_first_pass.out"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T BaseRecalibrator -I {input.bam} -knownSites %s -o {output}" % (java, jvm, gatk, reference, intervals, dbsnp)
+		
+		
+# PrintReads: Write out sequence read data (for filtering, merging, subsetting etc)
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_readutils_PrintReads.php
+rule printReads:
+	input:
+		bam = realignedBam,
+		bqsr = baseRecalibratorFirstPass
+	output:
+		bam = outBQSR + "/{sample}.recalibrated.bam",
+		bai = outBQSR + "/{sample}.recalibrated.bai"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T PrintReads -I {input.bam} -BQSR {input.bqsr} -o {output.bam}" % (java, jvm, gatk, reference, intervals)
+
+		
+# BaseRecalibrator: Generate base recalibration table to compensate for systematic errors in basecalling confidences
+# Generate the second pass recalibration table file
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_bqsr_BaseRecalibrator.php
+rule baseRecalibratorAfter:
+	input:
+		bam = realignedBam,
+		bqsr = baseRecalibratorFirstPass
+	output:
+		outBQSR + "/{sample}.base_recalibrator_second_pass.out"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T BaseRecalibrator -I {input.bam} -knownSites %s -BQSR {input.bqsr} -o {output}" % (java, jvm, gatk, reference, intervals, dbsnp)
+		
+
+# AnalyzeCovariates: Create plots to visualize base recalibration results
+# https://www.broadinstitute.org/gatk/guide/tooldocs/org_broadinstitute_gatk_tools_walkers_bqsr_AnalyzeCovariates.php
+rule analyzeCovariates:
+	input:
+		before = baseRecalibratorFirstPass,
+		after = baseRecalibratorSecondPass
+	output:
+		plots = outBQSR + "/analyze_covariates_{sample}.realign.BQSR.pdf",
+		csv = outBQSR + "/analyze_covariates_{sample}.realign.BQSR.csv"
+	shell:
+		"%s %s -jar %s -R %s -L %s -T AnalyzeCovariates -before {input.before} -after {input.after} -csv {output.csv} -plots {output.plots}" % (java, jvm, gatk, reference, intervals)
+
+		
+
+
+
+
+
+
+
+
+
+
+
+
+
+
